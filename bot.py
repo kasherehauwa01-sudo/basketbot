@@ -30,16 +30,21 @@ def number_to_emoji(n: int) -> str:
 
 
 def get_token() -> str:
-    env_token = os.getenv("BOT_TOKEN", "").strip()
+    env_token = os.getenv("token", "").strip()
     if env_token:
         return env_token
+
+    legacy_env_token = os.getenv("BOT_TOKEN", "").strip()
+    if legacy_env_token:
+        return legacy_env_token
 
     token = TOKEN.strip()
     if token and token != "PASTE_YOUR_BOT_TOKEN_HERE":
         return token
 
     raise RuntimeError(
-        "BOT_TOKEN не задан. Укажите токен в переменной окружения BOT_TOKEN "
+        "Токен не задан. Укажите токен в переменной окружения token "
+        "(или BOT_TOKEN для обратной совместимости) "
         "или замените значение константы TOKEN в bot.py."
     )
 
