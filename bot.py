@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -26,6 +27,21 @@ DIGIT_EMOJI = {
 
 def number_to_emoji(n: int) -> str:
     return "".join(DIGIT_EMOJI[digit] for digit in str(n))
+
+
+def get_token() -> str:
+    env_token = os.getenv("BOT_TOKEN", "").strip()
+    if env_token:
+        return env_token
+
+    token = TOKEN.strip()
+    if token and token != "PASTE_YOUR_BOT_TOKEN_HERE":
+        return token
+
+    raise RuntimeError(
+        "BOT_TOKEN не задан. Укажите токен в переменной окружения BOT_TOKEN "
+        "или замените значение константы TOKEN в bot.py."
+    )
 
 
 def build_results_text(poll_id: str) -> str:
@@ -90,7 +106,7 @@ async def handle_poll_answer(poll_answer: PollAnswer) -> None:
 
 
 async def main() -> None:
-    bot = Bot(token=TOKEN)
+    bot = Bot(token=get_token())
     dp = Dispatcher()
     dp.include_router(router)
     await bot.delete_webhook(drop_pending_updates=True)
