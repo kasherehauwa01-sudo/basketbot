@@ -3,6 +3,7 @@ import os
 from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message, PollAnswer
 
 TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
@@ -64,26 +65,64 @@ def build_results_text(poll_id: str) -> str:
     return "\n".join(lines)
 
 
+async def resend_poll_from_bot(message: Message) -> None:
+    poll = message.poll
+    if poll is None:
+        return
+
+    options = [option.text for option in poll.options]
+    poll_kwargs: dict[str, Any] = {
+        "chat_id": message.chat.id,
+        "question": poll.question,
+        "options": options,
+        "is_anonymous": False,
+        "type": poll.type,
+        "allows_multiple_answers": poll.allows_multiple_answers,
+    }
+
+    if poll.type == "quiz" and poll.correct_option_id is not None:
+        poll_kwargs["correct_option_id"] = poll.correct_option_id
+        if poll.explanation:
+            poll_kwargs["explanation"] = poll.explanation
+        if poll.explanation_entities:
+            poll_kwargs["explanation_entities"] = poll.explanation_entities
+
+    bot_poll_message = await message.bot.send_poll(**poll_kwargs)
+    if bot_poll_message.poll is None:
+        return
+
+    bot_poll_id = bot_poll_message.poll.id
+    polls[bot_poll_id] = {
+        "chat_id": message.chat.id,
+        "message_id": 0,
+        "options": {
+            option_id: {"text": option.text, "votes": set()}
+            for option_id, option in enumerate(bot_poll_message.poll.options)
+        },
+    }
+
+    results_message = await message.bot.send_message(
+        chat_id=message.chat.id,
+        text=build_results_text(bot_poll_id),
+    )
+    polls[bot_poll_id]["message_id"] = results_message.message_id
+
+    try:
+        await message.delete()
+    except TelegramAPIError:
+        pass
+
+
 @router.message(F.poll)
 async def handle_poll_message(message: Message) -> None:
     poll = message.poll
     if poll is None or poll.is_anonymous:
         return
 
-    poll_id = poll.id
-    options = {
-        option_id: {"text": option.text, "votes": set()}
-        for option_id, option in enumerate(poll.options)
-    }
+    if message.from_user and message.from_user.is_bot:
+        return
 
-    polls[poll_id] = {
-        "chat_id": message.chat.id,
-        "message_id": 0,
-        "options": options,
-    }
-
-    result_message = await message.answer(build_results_text(poll_id))
-    polls[poll_id]["message_id"] = result_message.message_id
+    await resend_poll_from_bot(message)
 
 
 @router.poll_answer()
