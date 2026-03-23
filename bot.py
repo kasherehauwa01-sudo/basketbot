@@ -4,7 +4,7 @@ from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import Message, PollAnswer
+from aiogram.types import Message, Poll, PollAnswer
 
 TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
 
@@ -55,14 +55,27 @@ def build_results_text(poll_id: str) -> str:
     lines = ["📊 Результаты голосования", ""]
 
     for option in poll_data["options"].values():
-        votes_count = len(option["votes"])
+        votes_count = option.get("count", len(option["votes"]))
         lines.append(f'{option["text"]} — {number_to_emoji(votes_count)}')
 
-    total_voters = len(
-        {user_id for option in poll_data["options"].values() for user_id in option["votes"]}
+    total_voters = poll_data.get(
+        "total_voter_count",
+        len({user_id for option in poll_data["options"].values() for user_id in option["votes"]}),
     )
     lines.extend(["", f"Всего: {total_voters} человек"])
     return "\n".join(lines)
+
+
+async def update_results_message(bot: Bot, poll_id: str) -> None:
+    poll_data = polls.get(poll_id)
+    if poll_data is None:
+        return
+
+    await bot.edit_message_text(
+        chat_id=poll_data["chat_id"],
+        message_id=poll_data["message_id"],
+        text=build_results_text(poll_id),
+    )
 
 
 async def resend_poll_from_bot(message: Message) -> None:
@@ -95,8 +108,9 @@ async def resend_poll_from_bot(message: Message) -> None:
     polls[bot_poll_id] = {
         "chat_id": message.chat.id,
         "message_id": 0,
+        "total_voter_count": bot_poll_message.poll.total_voter_count,
         "options": {
-            option_id: {"text": option.text, "votes": set()}
+            option_id: {"text": option.text, "votes": set(), "count": option.voter_count}
             for option_id, option in enumerate(bot_poll_message.poll.options)
         },
     }
@@ -125,6 +139,22 @@ async def handle_poll_message(message: Message) -> None:
     await resend_poll_from_bot(message)
 
 
+@router.poll()
+async def handle_poll_update(poll: Poll) -> None:
+    poll_data = polls.get(poll.id)
+    if poll_data is None:
+        return
+
+    poll_data["total_voter_count"] = poll.total_voter_count
+
+    for option_id, option in enumerate(poll.options):
+        if option_id in poll_data["options"]:
+            poll_data["options"][option_id]["text"] = option.text
+            poll_data["options"][option_id]["count"] = option.voter_count
+
+    await update_results_message(bot=poll.bot, poll_id=poll.id)
+
+
 @router.poll_answer()
 async def handle_poll_answer(poll_answer: PollAnswer) -> None:
     poll_id = poll_answer.poll_id
@@ -141,12 +171,20 @@ async def handle_poll_answer(poll_answer: PollAnswer) -> None:
         if option_id in poll_data["options"]:
             poll_data["options"][option_id]["votes"].add(user_id)
 
-    bot = poll_answer.bot
-    await bot.edit_message_text(
-        chat_id=poll_data["chat_id"],
-        message_id=poll_data["message_id"],
-        text=build_results_text(poll_id),
-    )
+    for option in poll_data["options"].values():
+        option["count"] = len(option["votes"])
+
+    if poll_answer.option_ids:
+        poll_data["total_voter_count"] = max(
+            poll_data.get("total_voter_count", 0),
+            len({uid for option in poll_data["options"].values() for uid in option["votes"]}),
+        )
+    else:
+        poll_data["total_voter_count"] = len(
+            {uid for option in poll_data["options"].values() for uid in option["votes"]}
+        )
+
+    await update_results_message(bot=poll_answer.bot, poll_id=poll_id)
 
 
 async def main() -> None:
