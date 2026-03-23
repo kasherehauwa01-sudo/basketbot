@@ -50,6 +50,16 @@ def get_token() -> str:
     )
 
 
+def format_game_cost(first_option_votes: int) -> str:
+    if first_option_votes <= 0:
+        return "—"
+
+    cost = 2250 / first_option_votes
+    if cost.is_integer():
+        return str(int(cost))
+    return f"{cost:.2f}".replace(".", ",")
+
+
 def build_results_text(poll_id: str) -> str:
     poll_data = polls[poll_id]
     lines = ["📊 Результаты голосования", ""]
@@ -62,8 +72,29 @@ def build_results_text(poll_id: str) -> str:
         "total_voter_count",
         len({user_id for option in poll_data["options"].values() for user_id in option["votes"]}),
     )
-    lines.extend(["", f"Всего: {total_voters} человек"])
+    first_option_votes = poll_data["options"].get(0, {}).get("count", 0)
+    lines.extend(
+        [
+            "",
+            f"Всего: {total_voters} человек",
+            f"Стоимость игры составляет {format_game_cost(first_option_votes)} руб",
+        ]
+    )
     return "\n".join(lines)
+
+
+async def maybe_send_unlock_message(bot: Bot, poll_id: str) -> None:
+    poll_data = polls.get(poll_id)
+    if poll_data is None or poll_data.get("unlock_message_sent"):
+        return
+
+    first_option_votes = poll_data["options"].get(0, {}).get("count", 0)
+    if first_option_votes > 7:
+        await bot.send_message(
+            chat_id=poll_data["chat_id"],
+            text="Достигнуто: 7 игроков\nРазблокирован новый персонаж — @Ilhomchik_R",
+        )
+        poll_data["unlock_message_sent"] = True
 
 
 async def update_results_message(bot: Bot, poll_id: str) -> None:
@@ -109,6 +140,7 @@ async def resend_poll_from_bot(message: Message) -> None:
         "chat_id": message.chat.id,
         "message_id": 0,
         "total_voter_count": bot_poll_message.poll.total_voter_count,
+        "unlock_message_sent": False,
         "options": {
             option_id: {"text": option.text, "votes": set(), "count": option.voter_count}
             for option_id, option in enumerate(bot_poll_message.poll.options)
@@ -153,6 +185,7 @@ async def handle_poll_update(poll: Poll) -> None:
             poll_data["options"][option_id]["count"] = option.voter_count
 
     await update_results_message(bot=poll.bot, poll_id=poll.id)
+    await maybe_send_unlock_message(bot=poll.bot, poll_id=poll.id)
 
 
 @router.poll_answer()
@@ -185,6 +218,7 @@ async def handle_poll_answer(poll_answer: PollAnswer) -> None:
         )
 
     await update_results_message(bot=poll_answer.bot, poll_id=poll_id)
+    await maybe_send_unlock_message(bot=poll_answer.bot, poll_id=poll_id)
 
 
 async def main() -> None:
