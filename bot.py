@@ -1,0 +1,101 @@
+import asyncio
+from typing import Any
+
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.types import Message, PollAnswer
+
+TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+
+router = Router()
+
+polls: dict[str, dict[str, Any]] = {}
+
+DIGIT_EMOJI = {
+    "0": "0️⃣",
+    "1": "1️⃣",
+    "2": "2️⃣",
+    "3": "3️⃣",
+    "4": "4️⃣",
+    "5": "5️⃣",
+    "6": "6️⃣",
+    "7": "7️⃣",
+    "8": "8️⃣",
+    "9": "9️⃣",
+}
+
+
+def number_to_emoji(n: int) -> str:
+    return "".join(DIGIT_EMOJI[digit] for digit in str(n))
+
+
+def build_results_text(poll_id: str) -> str:
+    poll_data = polls[poll_id]
+    lines = ["📊 Результаты голосования", ""]
+
+    for option in poll_data["options"].values():
+        votes_count = len(option["votes"])
+        lines.append(f'{option["text"]} — {number_to_emoji(votes_count)}')
+
+    total_voters = len(
+        {user_id for option in poll_data["options"].values() for user_id in option["votes"]}
+    )
+    lines.extend(["", f"Всего: {total_voters} человек"])
+    return "\n".join(lines)
+
+
+@router.message(F.poll)
+async def handle_poll_message(message: Message) -> None:
+    poll = message.poll
+    if poll is None or poll.is_anonymous:
+        return
+
+    poll_id = poll.id
+    options = {
+        option_id: {"text": option.text, "votes": set()}
+        for option_id, option in enumerate(poll.options)
+    }
+
+    polls[poll_id] = {
+        "chat_id": message.chat.id,
+        "message_id": 0,
+        "options": options,
+    }
+
+    result_message = await message.answer(build_results_text(poll_id))
+    polls[poll_id]["message_id"] = result_message.message_id
+
+
+@router.poll_answer()
+async def handle_poll_answer(poll_answer: PollAnswer) -> None:
+    poll_id = poll_answer.poll_id
+    poll_data = polls.get(poll_id)
+    if poll_data is None:
+        return
+
+    user_id = poll_answer.user.id
+
+    for option in poll_data["options"].values():
+        option["votes"].discard(user_id)
+
+    for option_id in poll_answer.option_ids:
+        if option_id in poll_data["options"]:
+            poll_data["options"][option_id]["votes"].add(user_id)
+
+    bot = poll_answer.bot
+    await bot.edit_message_text(
+        chat_id=poll_data["chat_id"],
+        message_id=poll_data["message_id"],
+        text=build_results_text(poll_id),
+    )
+
+
+async def main() -> None:
+    bot = Bot(token=TOKEN)
+    dp = Dispatcher()
+    dp.include_router(router)
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
