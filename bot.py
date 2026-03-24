@@ -77,7 +77,7 @@ def build_results_text(poll_id: str) -> str:
         [
             "",
             f"Всего: {total_voters} человек",
-            f"Стоимость игры составляет {format_game_cost(first_option_votes)} руб",
+            f"Стоимость игры: {format_game_cost(first_option_votes)} руб",
         ]
     )
     return "\n".join(lines)
