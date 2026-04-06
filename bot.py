@@ -1,12 +1,15 @@
 import asyncio
 import os
+from pathlib import Path
 from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import Message, Poll, PollAnswer
+from aiogram.types import FSInputFile, Message, Poll, PollAnswer
 
 TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+UNLOCK_MEDIA_PATH = Path(__file__).with_name("UNLOCKED.gif")
+UNLOCK_TEXT = "Достигнуто: 7 игроков\nРазблокирован новый персонаж — @Ilhomchik_R"
 
 router = Router()
 
@@ -90,10 +93,15 @@ async def maybe_send_unlock_message(bot: Bot, poll_id: str) -> None:
 
     first_option_votes = poll_data["options"].get(0, {}).get("count", 0)
     if first_option_votes > 7:
-        await bot.send_message(
-            chat_id=poll_data["chat_id"],
-            text="Достигнуто: 7 игроков\nРазблокирован новый персонаж — @Ilhomchik_R",
-        )
+        if UNLOCK_MEDIA_PATH.exists():
+            await bot.send_animation(
+                chat_id=poll_data["chat_id"],
+                animation=FSInputFile(UNLOCK_MEDIA_PATH),
+                caption=UNLOCK_TEXT,
+            )
+        else:
+            await bot.send_message(chat_id=poll_data["chat_id"], text=UNLOCK_TEXT)
+
         poll_data["unlock_message_sent"] = True
 
 
@@ -141,6 +149,7 @@ async def resend_poll_from_bot(message: Message) -> None:
         "message_id": 0,
         "total_voter_count": bot_poll_message.poll.total_voter_count,
         "unlock_message_sent": False,
+        "user_choices": {},
         "options": {
             option_id: {"text": option.text, "votes": set(), "count": option.voter_count}
             for option_id, option in enumerate(bot_poll_message.poll.options)
@@ -196,26 +205,34 @@ async def handle_poll_answer(poll_answer: PollAnswer) -> None:
         return
 
     user_id = poll_answer.user.id
+    user_choices: dict[int, set[int]] = poll_data.setdefault("user_choices", {})
+    previous_choices = user_choices.get(user_id, set())
+    new_choices = set(poll_answer.option_ids)
 
-    for option in poll_data["options"].values():
-        option["votes"].discard(user_id)
+    removed_choices = previous_choices - new_choices
+    added_choices = new_choices - previous_choices
 
-    for option_id in poll_answer.option_ids:
-        if option_id in poll_data["options"]:
-            poll_data["options"][option_id]["votes"].add(user_id)
+    for option_id in removed_choices:
+        option = poll_data["options"].get(option_id)
+        if option is not None:
+            option["votes"].discard(user_id)
+            option["count"] = max(0, option.get("count", 0) - 1)
 
-    for option in poll_data["options"].values():
-        option["count"] = len(option["votes"])
+    for option_id in added_choices:
+        option = poll_data["options"].get(option_id)
+        if option is not None:
+            option["votes"].add(user_id)
+            option["count"] = option.get("count", 0) + 1
 
-    if poll_answer.option_ids:
-        poll_data["total_voter_count"] = max(
-            poll_data.get("total_voter_count", 0),
-            len({uid for option in poll_data["options"].values() for uid in option["votes"]}),
-        )
+    if new_choices:
+        user_choices[user_id] = new_choices
     else:
-        poll_data["total_voter_count"] = len(
-            {uid for option in poll_data["options"].values() for uid in option["votes"]}
-        )
+        user_choices.pop(user_id, None)
+
+    if not previous_choices and new_choices:
+        poll_data["total_voter_count"] = poll_data.get("total_voter_count", 0) + 1
+    elif previous_choices and not new_choices:
+        poll_data["total_voter_count"] = max(0, poll_data.get("total_voter_count", 0) - 1)
 
     await update_results_message(bot=poll_answer.bot, poll_id=poll_id)
     await maybe_send_unlock_message(bot=poll_answer.bot, poll_id=poll_id)
@@ -225,7 +242,7 @@ async def main() -> None:
     bot = Bot(token=get_token())
     dp = Dispatcher()
     dp.include_router(router)
-    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.delete_webhook()
     await dp.start_polling(bot)
 
 
