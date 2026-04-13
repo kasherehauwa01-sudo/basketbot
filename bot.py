@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,24 @@ UNLOCK_TEXT = "Достигнуто: 7 игроков\nРазблокирова�
 router = Router()
 
 polls: dict[str, dict[str, Any]] = {}
+
+PLAYERS_SKILL = {
+    "@imico699": "high",
+    "@ProtsenkoMax": "high",
+    "@Ilhomchik_R": "medium",
+    "@Shutto4ka": "medium",
+    "@AnikoV": "medium",
+    "@alexandrgritsuk": "medium",
+    "Жека Богатый": "high",
+    "@select_valentin": "low",
+    "@MrR1cco": "medium",
+    "Михаил": "low",
+    "@Vitaliitreid": "low",
+    "@My_mf_life": "high",
+    "@RomanGladyshko": "medium",
+}
+
+SKILL_TO_SCORE = {"high": 3, "medium": 2, "low": 1}
 
 DIGIT_EMOJI = {
     "0": "0️⃣",
@@ -63,27 +82,97 @@ def format_game_cost(first_option_votes: int) -> str:
     return f"{cost:.2f}".replace(".", ",")
 
 
-def build_results_text(poll_id: str) -> str:
-    poll_data = polls[poll_id]
-    lines = ["📊 Результаты голосования", ""]
+def get_player_score(player_name: str) -> int:
+    # Если игрок не найден в справочнике, по ТЗ используем уровень medium.
+    level = PLAYERS_SKILL.get(player_name)
+    if level is None:
+        level = PLAYERS_SKILL.get(player_name.lower())
+    return SKILL_TO_SCORE.get(level or "medium", 2)
 
-    for option in poll_data["options"].values():
-        votes_count = option.get("count", len(option["votes"]))
-        lines.append(f'{option["text"]} — {number_to_emoji(votes_count)}')
 
-    total_voters = poll_data.get(
-        "total_voter_count",
-        len({user_id for option in poll_data["options"].values() for user_id in option["votes"]}),
-    )
-    first_option_votes = poll_data["options"].get(0, {}).get("count", 0)
-    lines.extend(
+def balance_teams(team1: list[tuple[str, int]], team2: list[tuple[str, int]]) -> None:
+    # Простая балансировка одним улучшающим обменом (swap), если разница > 1.
+    score1 = sum(score for _, score in team1)
+    score2 = sum(score for _, score in team2)
+    current_diff = abs(score1 - score2)
+    if current_diff <= 1:
+        return
+
+    for i, (_, s1) in enumerate(team1):
+        for j, (_, s2) in enumerate(team2):
+            new_score1 = score1 - s1 + s2
+            new_score2 = score2 - s2 + s1
+            new_diff = abs(new_score1 - new_score2)
+            if new_diff < current_diff:
+                team1[i], team2[j] = team2[j], team1[i]
+                return
+
+
+def generate_teams(voted_users: list[str]) -> str:
+    # 1) Формируем пары (игрок, score) и перемешиваем для случайности внутри одинаковых уровней.
+    users_with_scores = [(user, get_player_score(user)) for user in voted_users]
+    random.shuffle(users_with_scores)
+
+    # 2) Сортируем по силе по убыванию.
+    users_with_scores = sorted(users_with_scores, key=lambda x: x[1], reverse=True)
+
+    # 3) Делим "змейкой": 1,2,2,1,1,2,...
+    team1: list[tuple[str, int]] = []
+    team2: list[tuple[str, int]] = []
+    snake_pattern = (1, 2, 2, 1)
+
+    for i, player in enumerate(users_with_scores):
+        if snake_pattern[i % 4] == 1:
+            team1.append(player)
+        else:
+            team2.append(player)
+
+    # 4) Балансировка одним улучшающим swap.
+    balance_teams(team1, team2)
+
+    # 5) Рандомно определяем, у какой команды мяч.
+    ball_team = random.choice([1, 2])
+    team1_header = "Команда 1 🏀:" if ball_team == 1 else "Команда 1:"
+    team2_header = "Команда 2 🏀:" if ball_team == 2 else "Команда 2:"
+
+    team1_lines = [f"* {name}" for name, _ in team1] or ["* —"]
+    team2_lines = [f"* {name}" for name, _ in team2] or ["* —"]
+
+    return "\n".join(
         [
+            f"🏀 Проголосовало: {len(voted_users)} человек",
             "",
-            f"Всего: {total_voters} человек",
-            f"Стоимость игры: {format_game_cost(first_option_votes)} руб",
+            team1_header,
+            *team1_lines,
+            "",
+            team2_header,
+            *team2_lines,
         ]
     )
-    return "\n".join(lines)
+
+
+def get_voted_users_for_first_option(poll_id: str) -> list[str]:
+    poll_data = polls[poll_id]
+    first_option_user_ids = poll_data["options"].get(0, {}).get("votes", set())
+    user_labels = poll_data.get("user_labels", {})
+
+    # Строим актуальный список отображаемых имен участников первого варианта.
+    return [user_labels.get(user_id, str(user_id)) for user_id in sorted(first_option_user_ids)]
+
+
+def build_combined_text(poll_id: str) -> str:
+    poll_data = polls[poll_id]
+    first_option_votes = poll_data["options"].get(0, {}).get("count", 0)
+    voted_users = get_voted_users_for_first_option(poll_id)
+
+    return "\n".join(
+        [
+            f"Количество игроков: {first_option_votes}",
+            f"Стоимость игры: {format_game_cost(first_option_votes)} руб",
+            "",
+            generate_teams(voted_users),
+        ]
+    )
 
 
 async def maybe_send_unlock_message(bot: Bot, poll_id: str) -> None:
@@ -113,7 +202,7 @@ async def update_results_message(bot: Bot, poll_id: str) -> None:
     await bot.edit_message_text(
         chat_id=poll_data["chat_id"],
         message_id=poll_data["message_id"],
-        text=build_results_text(poll_id),
+        text=build_combined_text(poll_id),
     )
 
 
@@ -150,6 +239,7 @@ async def resend_poll_from_bot(message: Message) -> None:
         "total_voter_count": bot_poll_message.poll.total_voter_count,
         "unlock_message_sent": False,
         "user_choices": {},
+        "user_labels": {},
         "options": {
             option_id: {"text": option.text, "votes": set(), "count": option.voter_count}
             for option_id, option in enumerate(bot_poll_message.poll.options)
@@ -158,7 +248,7 @@ async def resend_poll_from_bot(message: Message) -> None:
 
     results_message = await message.bot.send_message(
         chat_id=message.chat.id,
-        text=build_results_text(bot_poll_id),
+        text=build_combined_text(bot_poll_id),
     )
     polls[bot_poll_id]["message_id"] = results_message.message_id
 
@@ -206,33 +296,30 @@ async def handle_poll_answer(poll_answer: PollAnswer) -> None:
 
     user_id = poll_answer.user.id
     user_choices: dict[int, set[int]] = poll_data.setdefault("user_choices", {})
-    previous_choices = user_choices.get(user_id, set())
     new_choices = set(poll_answer.option_ids)
-
-    removed_choices = previous_choices - new_choices
-    added_choices = new_choices - previous_choices
-
-    for option_id in removed_choices:
-        option = poll_data["options"].get(option_id)
-        if option is not None:
-            option["votes"].discard(user_id)
-            option["count"] = max(0, option.get("count", 0) - 1)
-
-    for option_id in added_choices:
-        option = poll_data["options"].get(option_id)
-        if option is not None:
-            option["votes"].add(user_id)
-            option["count"] = option.get("count", 0) + 1
-
     if new_choices:
         user_choices[user_id] = new_choices
     else:
         user_choices.pop(user_id, None)
 
-    if not previous_choices and new_choices:
-        poll_data["total_voter_count"] = poll_data.get("total_voter_count", 0) + 1
-    elif previous_choices and not new_choices:
-        poll_data["total_voter_count"] = max(0, poll_data.get("total_voter_count", 0) - 1)
+    username = poll_answer.user.username
+    display_name = f"@{username}" if username else poll_answer.user.full_name
+    poll_data.setdefault("user_labels", {})[user_id] = display_name
+
+    # На каждом событии голоса полностью пересчитываем состояние с нуля на основе user_choices.
+    for option in poll_data["options"].values():
+        option["votes"].clear()
+
+    for uid, option_ids in user_choices.items():
+        for option_id in option_ids:
+            option = poll_data["options"].get(option_id)
+            if option is not None:
+                option["votes"].add(uid)
+
+    for option in poll_data["options"].values():
+        option["count"] = len(option["votes"])
+
+    poll_data["total_voter_count"] = sum(1 for option_ids in user_choices.values() if option_ids)
 
     await update_results_message(bot=poll_answer.bot, poll_id=poll_id)
     await maybe_send_unlock_message(bot=poll_answer.bot, poll_id=poll_id)
