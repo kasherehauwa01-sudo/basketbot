@@ -474,7 +474,6 @@ async def main() -> None:
     bot = Bot(token=get_token())
     dp = Dispatcher()
     dp.include_router(router)
-    await bot.delete_webhook()
     await dp.start_polling(bot)
 
 
