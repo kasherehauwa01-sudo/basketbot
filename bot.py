@@ -270,18 +270,12 @@ def generate_teams(voted_users: list[dict[str, Any]], ball_team: int | None = No
 
     return "\n".join(
         [
-            f"Проголосовало: {total_players} человек",
-            "",
             team1_header,
             *team1_main_lines,
-            "",
-            "Запас:",
             *team1_extra_lines,
             "",
             team2_header,
             *team2_main_lines,
-            "",
-            "Запас:",
             *team2_extra_lines,
         ]
     )
@@ -299,6 +293,7 @@ def get_voted_users_for_first_option(poll_id: str) -> list[dict[str, Any]]:
 def build_combined_text(poll_id: str) -> str:
     poll_data = polls[poll_id]
     first_option_votes = poll_data["options"].get(0, {}).get("count", 0)
+    total_voted = poll_data.get("total_voter_count", 0)
     voted_users = get_voted_users_for_first_option(poll_id)
     ball_team = poll_data.get("ball_team")
 
@@ -312,7 +307,8 @@ def build_combined_text(poll_id: str) -> str:
 
     return "\n".join(
         [
-            f"Количество игроков: {first_option_votes}",
+            f"Всего игроков: {first_option_votes} человек",
+            f"Проголосовавших: {total_voted} человек",
             f"Стоимость игры: {format_game_cost(first_option_votes)} руб",
             "",
             generate_teams(voted_users, ball_team=ball_team),
