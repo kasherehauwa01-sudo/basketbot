@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import FSInputFile, Message, Poll, PollAnswer
 
-TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+TOKEN = "8794835785:AAEVOQlEI7H2fep4Dut_MVOdpacBZZ6sdNc"
 UNLOCK_MEDIA_PATH = Path(__file__).with_name("UNLOCKED.gif")
 UNLOCK_TEXT = "Достигнуто: 7 игроков\nРазблокирован новый персонаж — @Ilhomchik_R"
 
